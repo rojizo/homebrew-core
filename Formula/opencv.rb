@@ -11,6 +11,8 @@ class Opencv < Formula
     sha256 "6073b44f5b601de364147a9b6b3ee784c6070303582cf3db9a513ce8a1796a0c" => :yosemite
   end
 
+  option "without-python", "Build without python2 support"
+
   depends_on "cmake" => :build
   depends_on "pkg-config" => :build
   depends_on "eigen"
@@ -19,9 +21,9 @@ class Opencv < Formula
   depends_on "libpng"
   depends_on "libtiff"
   depends_on "openexr"
-  depends_on :python
-  depends_on :python3
-  depends_on "numpy"
+  depends_on :python => :recommended if MacOS.version <= :snow_leopard
+  depends_on :python3 => :recommended
+  depends_on "numpy" if build.with?("python") || build.with?("python3")
 
   needs :cxx11
 
@@ -37,13 +39,6 @@ class Opencv < Formula
 
     # Reset PYTHONPATH, workaround for https://github.com/Homebrew/homebrew-science/pull/4885
     ENV.delete("PYTHONPATH")
-
-    py_prefix = `python-config --prefix`.chomp
-    py_lib = "#{py_prefix}/lib"
-
-    py3_config = `python3-config --configdir`.chomp
-    py3_include = `python3 -c "import distutils.sysconfig as s; print(s.get_python_inc())"`.chomp
-    py3_version = Language::Python.major_minor_version "python3"
 
     args = std_cmake_args + %W[
       -DCMAKE_OSX_DEPLOYMENT_TARGET=
@@ -70,15 +65,27 @@ class Opencv < Formula
       -DWITH_QT=OFF
       -DWITH_TBB=OFF
       -DWITH_VTK=OFF
-      -DBUILD_opencv_python2=ON
-      -DBUILD_opencv_python3=ON
-      -DPYTHON2_EXECUTABLE=#{which "python"}
-      -DPYTHON2_LIBRARY=#{py_lib}/libpython2.7.dylib
-      -DPYTHON2_INCLUDE_DIR=#{py_prefix}/include/python2.7
-      -DPYTHON3_EXECUTABLE=#{which "python3"}
-      -DPYTHON3_LIBRARY=#{py3_config}/libpython#{py3_version}.dylib
-      -DPYTHON3_INCLUDE_DIR=#{py3_include}
     ]
+
+    args << "-DBUILD_opencv_python2=" + (build.with?("python") ? "ON" : "OFF")
+    args << "-DBUILD_opencv_python3=" + (build.with?("python3") ? "ON" : "OFF")
+
+    if build.with? "python"
+      py_prefix = `python-config --prefix`.chomp
+      py_lib = "#{py_prefix}/lib"
+      args << "-DPYTHON2_EXECUTABLE=#{which "python"}"
+      args << "-DPYTHON2_LIBRARY=#{py_lib}/libpython2.7.dylib"
+      args << "-DPYTHON2_INCLUDE_DIR=#{py_prefix}/include/python2.7"
+    end
+
+    if build.with? "python3"
+      py3_config = `python3-config --configdir`.chomp
+      py3_include = `python3 -c "import distutils.sysconfig as s; print(s.get_python_inc())"`.chomp
+      py3_version = Language::Python.major_minor_version "python3"
+      args << "-DPYTHON3_EXECUTABLE=#{which "python3"}"
+      args << "-DPYTHON3_LIBRARY=#{py3_config}/libpython#{py3_version}.dylib"
+      args << "-DPYTHON3_INCLUDE_DIR=#{py3_include}"
+    end
 
     if build.bottle?
       args += %w[-DENABLE_SSE41=OFF -DENABLE_SSE42=OFF -DENABLE_AVX=OFF
@@ -104,9 +111,9 @@ class Opencv < Formula
     system ENV.cxx, "test.cpp", "-I#{include}", "-L#{lib}", "-o", "test"
     assert_equal `./test`.strip, version.to_s
 
-    ["python", "python3"].each do |python|
-      output = shell_output("#{python} -c 'import cv2; print(cv2.__version__)'")
-      assert_equal version.to_s, output.chomp
+    Language::Python.each_python(build) do |python, _version|
+      assert_match version.to_s,
+                   shell_output("#{python} -c 'import cv2; print(cv2.__version__)'")
     end
   end
 end
